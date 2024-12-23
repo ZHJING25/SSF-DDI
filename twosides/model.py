@@ -48,6 +48,56 @@ class GlobalAttentionPool(nn.Module):
         return global_graph_emb
 
 
+class DMPNN(nn.Module):
+    def __init__(self, edge_dim, n_feats, n_iter):
+        super().__init__()
+        self.n_iter = n_iter
+
+        self.lin_u = nn.Linear(n_feats, n_feats, bias=False)
+        self.lin_v = nn.Linear(n_feats, n_feats, bias=False)
+        self.lin_edge = nn.Linear(edge_dim, n_feats, bias=False)
+
+        self.att = GlobalAttentionPool(n_feats)
+        self.a = nn.Parameter(torch.zeros(1, n_feats, n_iter))
+        self.lin_gout = nn.Linear(n_feats, n_feats)
+        self.a_bias = nn.Parameter(torch.zeros(1, 1, n_iter))
+
+        glorot(self.a)
+
+        self.lin_block = LinearBlock(n_feats)
+
+    def forward(self, data):
+
+        edge_index = data.edge_index
+
+        edge_u = self.lin_u(data.x)
+        edge_v = self.lin_v(data.x)
+        edge_uv = self.lin_edge(data.edge_attr)
+        edge_attr = (edge_u[edge_index[0]] + edge_v[edge_index[1]] + edge_uv) / 3
+        out = edge_attr
+        
+        out_list = []
+        gout_list = []
+        for n in range(self.n_iter):
+            out = scatter(out[data.line_graph_edge_index[0]] , data.line_graph_edge_index[1], dim_size=edge_attr.size(0), dim=0, reduce='add')
+            out = edge_attr + out
+            gout = self.att(out, data.line_graph_edge_index, data.edge_index_batch)
+            out_list.append(out)
+            gout_list.append(F.tanh((self.lin_gout(gout))))
+
+        gout_all = torch.stack(gout_list, dim=-1)
+        out_all = torch.stack(out_list, dim=-1)
+        scores = (gout_all * self.a).sum(1, keepdim=True) + self.a_bias
+        scores = torch.softmax(scores, dim=-1)
+        scores = scores.repeat_interleave(degree(data.edge_index_batch, dtype=data.edge_index_batch.dtype), dim=0)
+
+        out = (out_all * scores).sum(-1)
+
+        x = data.x + scatter(out , edge_index[1], dim_size=data.x.size(0), dim=0, reduce='add')
+        x = self.lin_block(x)
+
+        return x
+    
 class DrugEncoder(torch.nn.Module):
     def __init__(self, in_dim, edge_in_dim, hidden_dim=64, n_iter=10):
         super().__init__()
