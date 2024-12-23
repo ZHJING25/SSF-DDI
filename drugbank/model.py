@@ -43,6 +43,43 @@ class GlobalAttentionPool(nn.Module):
 
         return global_graph_emb
 
+class LinearBlock(nn.Module):
+    def __init__(self, n_feats):
+        super().__init__()
+        self.snd_n_feats = 6 * n_feats
+        self.lin1 = nn.Sequential(
+            nn.BatchNorm1d(n_feats),
+            nn.Linear(n_feats, self.snd_n_feats),
+        )
+        self.lin2 = nn.Sequential(
+            nn.BatchNorm1d(self.snd_n_feats),
+            nn.PReLU(),
+            nn.Linear(self.snd_n_feats, self.snd_n_feats),
+        )
+        self.lin3 = nn.Sequential(
+            nn.BatchNorm1d(self.snd_n_feats),
+            nn.PReLU(),
+            nn.Linear(self.snd_n_feats, self.snd_n_feats),
+        )
+        self.lin4 = nn.Sequential(
+            nn.BatchNorm1d(self.snd_n_feats),
+            nn.PReLU(),
+            nn.Linear(self.snd_n_feats, self.snd_n_feats)
+        )
+        self.lin5 = nn.Sequential(
+            nn.BatchNorm1d(self.snd_n_feats),
+            nn.PReLU(),
+            nn.Linear(self.snd_n_feats, n_feats)
+        )
+
+    def forward(self, x):
+        x = self.lin1(x)
+        x = (self.lin3(self.lin2(x)) + x) / 2
+        x = (self.lin4(x) + x) / 2
+        x = self.lin5(x)
+
+        return x   
+
 class DMPNN(nn.Module):
     def __init__(self, edge_dim, n_feats, n_iter):
         super().__init__()
